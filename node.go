@@ -26,12 +26,17 @@ type NodeInfo struct {
 }
 type Server struct {
 	pb.UnimplementedNodeServiceServer
+	node NodeInfo
 }
 
 var connectedNodesMapPort = make(map[int32]NodeInfo)
 var connectedNodesMapClient = make(map[pb.NodeServiceClient]NodeInfo)
 
-func (n NodeInfo) AnnounceConnection(ctx context.Context, announcement *pb.ConnectionAnnouncement) (*pb.Confirmation, error) {
+func (s *Server) IExist(context.Context, *pb.Confirmation) (*pb.Confirmation, error) {
+	return &pb.Confirmation{}, nil
+}
+
+func (s *Server) AnnounceConnection(ctx context.Context, announcement *pb.ConnectionAnnouncement) (*pb.Confirmation, error) {
 	//We have recieved a connection announcement, which means that a new node has established a connection to this client.
 	//We must also establish a connection to this client in return. We have the information we need from the ConnectionAnnouncement
 	transportCreds := insecure.NewCredentials()
@@ -48,20 +53,20 @@ func (n NodeInfo) AnnounceConnection(ctx context.Context, announcement *pb.Conne
 	//Add the node we have connected to our list of nodes in the system.
 	//We also maintain a map which lets us find the node from its NodeID.
 	nodeInfo := NodeInfo{port: announcement.NodeID, client: node}
-	n.connectedNodes = append(n.connectedNodes, nodeInfo.client)
+	s.node.connectedNodes = append(s.node.connectedNodes, nodeInfo.client)
 	connectedNodesMapPort[announcement.NodeID] = nodeInfo
 	connectedNodesMapClient[node] = nodeInfo
 	//We send back a confirmation message to indicate that the connection was esablished
 	return &pb.Confirmation{}, nil
 }
 
-func (n *NodeInfo) broadcastLeavingMessage() {
+func (s *Server) broadcastLeavingMessage() {
 	//We need to notify other connected nodes that this node is leaving the critical section.
-	for _, connectedNode := range n.connectedNodes {
+	for _, connectedNode := range s.node.connectedNodes {
 		node := connectedNodesMapClient[connectedNode]
-		if node.port != n.port {
+		if node.port != s.node.port {
 			_, err := connectedNode.AnnounceLeave(context.Background(), &pb.LeaveAnnouncement{
-				NodeID: n.port, // Identify this node
+				NodeID: s.node.port, // Identify this node
 			})
 			if err != nil {
 				log.Printf("Failed to send LeaveAnnouncement to node with port %d: %v\n", node.port, err)
@@ -103,15 +108,15 @@ func (n *NodeInfo) AnnounceLeave(ctx context.Context, announcement *pb.LeaveAnno
 	return &pb.LeaveAnnouncementResponse{}, nil
 }
 
-func (n *NodeInfo) AttemptToAccessTheCriticalZone(port int32) {
+func (s *Server) AttemptToAccessTheCriticalZone(port int32) {
 	var inCriticalSection = false
 	var accessGrantedCount = 0
 	for {
 		if !inCriticalSection {
-			for _, connectedNode := range n.connectedNodes {
+			for _, connectedNode := range s.node.connectedNodes {
 				node := connectedNodesMapClient[connectedNode]
-				if node.port != n.port {
-					accessRequestResponse, err := connectedNode.RequestAccess(context.Background(), &pb.AccessRequest{NodeID: port, Timestamp: n.timestamp})
+				if node.port != s.node.port {
+					accessRequestResponse, err := connectedNode.RequestAccess(context.Background(), &pb.AccessRequest{NodeID: port, Timestamp: s.node.timestamp})
 					if err != nil {
 						log.Fatalf("Oh no! Something went wrong while requesting access to enter critical section")
 					}
@@ -119,18 +124,18 @@ func (n *NodeInfo) AttemptToAccessTheCriticalZone(port int32) {
 						accessGrantedCount++
 					}
 					//We need to increment the logical clock timestamp
-					n.timestamp = UpdateTimestamp(accessRequestResponse.Timestamp, n.timestamp)
+					s.node.timestamp = UpdateTimestamp(accessRequestResponse.Timestamp, s.node.timestamp)
 
-					if accessRequestResponse.Timestamp > n.timestamp {
-						n.timestamp = accessRequestResponse.Timestamp
+					if accessRequestResponse.Timestamp > s.node.timestamp {
+						s.node.timestamp = accessRequestResponse.Timestamp
 					}
-					n.timestamp++
+					s.node.timestamp++
 				}
 				//We have now cycled through every node, sent out a request and recieved a response.
 				//We check if the number of responses granting access matches the number of connected nodes (minus one, since we don't send the request to this node!)
-				if accessGrantedCount == len(n.connectedNodes)-1 {
+				if accessGrantedCount == len(s.node.connectedNodes)-1 {
 					//If it matches we enter (and leave) the critical section
-					n.EnterCriticalSection()
+					s.EnterCriticalSection()
 					//After leaving we reset the inCriticalSection and accesGrantedCount variables.
 					inCriticalSection = false
 					accessGrantedCount = 0
@@ -141,7 +146,7 @@ func (n *NodeInfo) AttemptToAccessTheCriticalZone(port int32) {
 
 					//OBS OBS OBS OBS we should probably also send out a message to all nodes saying to queue the request from this node in case they didn't already to make sure we keep the queue consistent between nodes.
 					//There is a situation where nodes disagree where the queues become inconsistent between nodes which is not what we want.....
-					n.localQueue = append(n.localQueue, pb.AccessRequest{NodeID: port, Timestamp: n.timestamp})
+					s.node.localQueue = append(s.node.localQueue, pb.AccessRequest{NodeID: port, Timestamp: s.node.timestamp})
 				}
 			}
 		}
@@ -149,23 +154,23 @@ func (n *NodeInfo) AttemptToAccessTheCriticalZone(port int32) {
 	}
 }
 
-func (n *NodeInfo) EnterCriticalSectionDirectly(ctx context.Context, accessRequest *pb.AccessRequest) (*pb.Confirmation, error) {
-	n.EnterCriticalSection()
+func (s *Server) EnterCriticalSectionDirectly(ctx context.Context, accessRequest *pb.AccessRequest) (*pb.Confirmation, error) {
+	s.EnterCriticalSection()
 	return &pb.Confirmation{}, nil
 }
 
-func (n *NodeInfo) EnterCriticalSection() {
-	log.Printf("I HAVE JUST ENTERED THE CRITICAL ZONE ON PORT %v!", n.port)
+func (s *Server) EnterCriticalSection() {
+	log.Printf("I HAVE JUST ENTERED THE CRITICAL ZONE ON PORT %v!", s.node.port)
 	time.Sleep(time.Millisecond * time.Duration(1000))
-	log.Printf("I AM LEAVING THE CRITICAL ZONE NOW. PORT %v out!", n.port)
+	log.Printf("I AM LEAVING THE CRITICAL ZONE NOW. PORT %v out!", s.node.port)
 	time.Sleep(time.Millisecond * time.Duration(1000))
 
 	// Next we need to inform all the connected nodes that we are releasing the critical section so that another node may be granted access.
 	// We do this by calling broadcastLeaveMessage which calls the method AnnounceLeave on all connected nodes, which handles the logic of getting the next
 	// request from the queued requests and handling it.
-	n.broadcastLeavingMessage()
+	s.broadcastLeavingMessage()
 	//remove the request from the local queue. Since we don't need to call AnnounceLeave to our own node, we manually remove the request from the queue.
-	n.removeRequest(n.port)
+	s.node.removeRequest(s.node.port)
 }
 
 func (n *NodeInfo) removeRequest(nodeID int32) {
@@ -178,7 +183,7 @@ func (n *NodeInfo) removeRequest(nodeID int32) {
 	n.localQueue = newQueue
 }
 
-func (n NodeInfo) RequestAccess(ctx context.Context, accessRequest *pb.AccessRequest) (*pb.AccessRequestResponse, error) {
+func (n *NodeInfo) RequestAccess(ctx context.Context, accessRequest *pb.AccessRequest) (*pb.AccessRequestResponse, error) {
 
 	senderTimestamp := accessRequest.Timestamp
 	localTimestamp := n.timestamp
@@ -224,22 +229,32 @@ func EstablishConnectionToAllSystemClients(standardPort int, thisPort int, trans
 			address := "localhost:" + strconv.Itoa(port)
 			fmt.Println("Hello. Checking this port: " + address)
 			conn, err := grpc.Dial(address, grpc.WithTransportCredentials(transportCreds))
-			if err == nil { //THE PROBLEM IS THIS: THIS METHOD DOES NOT RETURN AN ERROR JUST BECAUSE THERE IS NO NODE ON THE PORT ...
+			if err == nil {
+				//OBS OBS OBS: THE PROBLEM IS THIS: THIS METHOD DOES NOT RETURN AN ERROR JUST BECAUSE THERE IS NO NODE ON THE PORT ...
 				//SO THE CODE THINKS ITS FOUND A NEW NODE EVEN WHEN THERE IS NONE. AND THE PROGRAM ONLY CRASHES ONCE
 				//THE CODE CALLS THE ANNOUNCECONNECTION METHOD ON THE NODE. SO HOW CAN WE CHECK IF THERE IS ACTUALLY A NODE ON THE PORT?
-				fmt.Println("Hurrah! We found another node.")
-				//We have found a node in the system at the port and established connection successfully.
+
+				//We make a node with the connection to check if there is anything there...
 				node := pb.NewNodeServiceClient(conn)
+				_, err1 := node.IExist(context.Background(), &pb.Confirmation{})
+				if err1 != nil {
+					//There is no node on this port. We move onto the next and try again.
+					fmt.Printf("THERE IS NO NODE HERE. THE ERROR: %v\n", err1)
+					continue
+				}
+				//We didn't get an error which means that there is a node on this port. We have established a connection and send an announcement to inform the node
 				//Send announcement of new connection to the node we have connected to.
 				_, err := node.AnnounceConnection(context.Background(), &pb.ConnectionAnnouncement{NodeID: int32(port)})
 				if err != nil {
 					log.Fatalf("Oh no! The node sent an announcement of a new connection but did not recieve a confirmation in return. Error: %v", err)
 				}
+				fmt.Println("SENDING THE ANNOUNCEMENT SEEMS TO HAVE GONE OK?")
 				//Add the node we have connected to to our list of nodes in the system.
 				nodeInfo := NodeInfo{port: int32(port), client: node}
 				connectedNodes = append(connectedNodes, nodeInfo.client)
+			} else {
+
 			}
-			fmt.Println("No server here.")
 		} else {
 			fmt.Println("The ports are the same! Don't try to connect to yourself here...")
 		}
@@ -281,9 +296,9 @@ func main() {
 	fmt.Println("Hello. I am registering the server now...")
 	// Create a gRPC server
 	grpcServer := grpc.NewServer()
-	serverStructure := Server{}
+	server := Server{}
 	// Register your gRPC service with the server
-	pb.RegisterNodeServiceServer(grpcServer, &serverStructure)
+	pb.RegisterNodeServiceServer(grpcServer, &server)
 	fmt.Println("Hello, still here. About to listen.")
 
 	//initialize the listener on the specified port. net.Listen listens for incoming connections with tcp socket
@@ -332,7 +347,8 @@ func main() {
 	//generate node
 	fmt.Println("Hello. Now making a node.")
 	node := &NodeInfo{port: int32(port), client: thisNode, connectedNodes: connectedNodes, timestamp: int32(timestamp)}
+	server.node = *node
 	fmt.Println("Hello. Now attempting to access the critical zone")
-	node.AttemptToAccessTheCriticalZone(int32(port))
+	server.AttemptToAccessTheCriticalZone(int32(port))
 	select {}
 }
