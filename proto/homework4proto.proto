@@ -1,0 +1,34 @@
+syntax = "proto3";
+
+package homework4;
+option go_package = "./proto";
+
+
+service NodeService {
+    rpc AnnounceConnection(ConnectionAnnouncement) returns (Confirmation);
+    rpc RequestAccess(AccessRequest) returns (AccessRequestResponse);
+    rpc AnnounceLeave(LeaveAnnouncement) returns (LeaveAnnouncementResponse);
+    rpc EnterCriticalSectionDirectly(AccessRequest) returns (Confirmation);
+}
+
+message AccessRequest {
+    int32 nodeID = 1;
+    int32 timestamp = 2;
+}
+message AccessRequestResponse {
+    bool granted = 1;
+    int32 timestamp = 2;
+}
+
+message ConnectionAnnouncement {
+    int32 nodeID = 1;
+    int32 timestamp = 2;
+}
+message Confirmation {}
+
+message LeaveAnnouncement {
+    int32 nodeID = 1;
+}
+
+message LeaveAnnouncementResponse {}
+
