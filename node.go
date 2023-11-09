@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os"
 	"sort"
 	"strconv"
 	"time"
@@ -103,11 +104,12 @@ func (n *NodeInfo) AnnounceLeave(ctx context.Context, announcement *pb.LeaveAnno
 	return &pb.LeaveAnnouncementResponse{}, nil
 }
 
-func (n *NodeInfo) AttemptToAccessTheCriticalZone(port int32) {
-	var inCriticalSection = false
+func (n *NodeInfo) AccessCriticalZone(port int32) {
+	n.inCriticalSection = false
 	var accessGrantedCount = 0
+	fmt.Println("Peer node given access to critical section:", &n)
 	for {
-		if !inCriticalSection {
+		if !n.inCriticalSection {
 			for _, connectedNode := range n.connectedNodes {
 				node := connectedNodesMapClient[connectedNode]
 				if node.port != n.port {
@@ -132,7 +134,7 @@ func (n *NodeInfo) AttemptToAccessTheCriticalZone(port int32) {
 					//If it matches we enter (and leave) the critical section
 					n.EnterCriticalSection()
 					//After leaving we reset the inCriticalSection and accesGrantedCount variables.
-					inCriticalSection = false
+					n.inCriticalSection = false
 					accessGrantedCount = 0
 				} else {
 					//If all nodes did not grant access, we instead need to queue our request. This is already handled in each node by the call to RequestAccess,
@@ -217,8 +219,8 @@ func FindAnAvailablePort(standardPort int) (int, error) {
 	return 0, fmt.Errorf("No free port found in the range")
 }
 
+// Cycle through the available ports in order to find the other nodes in the system and establish connections.
 func EstablishConnectionToAllSystemClients(standardPort int, thisPort int, transportCreds credentials.TransportCredentials, connectedNodes []pb.NodeServiceClient) {
-	//We cycle through the available ports in order to find the other nodes in the system and establish connections.
 	for port := standardPort; port < standardPort+100; port++ {
 		if port != thisPort {
 			address := "localhost:" + strconv.Itoa(port)
@@ -227,7 +229,7 @@ func EstablishConnectionToAllSystemClients(standardPort int, thisPort int, trans
 			if err != nil {
 
 				fmt.Println("Hurrah! We found another node.")
-				fmt.Println(conn.Target())
+
 				//We have found a node in the system at the port and established connection successfully.
 				node := pb.NewNodeServiceClient(conn)
 				//Send announcement of new connection to the node we have connected to.
@@ -322,7 +324,7 @@ func main() {
 	//The idea is to have a local representation of this node, that can interact with other nodes in the system,
 	//since it is a client that can call remote procedures and recieve remote procedure calls through grpc.
 	thisNode := pb.NewNodeServiceClient(conn)
-	fmt.Println("New client for this node generated:", thisNode)
+	fmt.Println("New client for this node generated:", &thisNode)
 
 	fmt.Println("Attempting to connect to all clients in system...")
 	//Now we want to establish connection to all other nodes in the system.
@@ -334,7 +336,21 @@ func main() {
 	//generate node
 	fmt.Println("Making a node...")
 	node := &NodeInfo{port: int32(port), client: thisNode, connectedNodes: connectedNodes, timestamp: int32(timestamp)}
+
+	fmt.Println("Press 1 to start critical system operation, or 2 to exit: ")
+	var input int
+	fmt.Scan(&input)
+
+	for input != 1 {
+		if input == 2 {
+			os.Exit(1)
+		} else {
+			fmt.Println("Unknown command, try again: ")
+			fmt.Scan(&input)
+		}
+	}
+
 	fmt.Println("Attempting to access the critical zone...")
-	node.AttemptToAccessTheCriticalZone(int32(port))
+	node.AccessCriticalZone(int32(port))
 	select {}
 }
