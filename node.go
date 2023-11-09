@@ -37,12 +37,12 @@ func (n NodeInfo) AnnounceConnection(ctx context.Context, announcement *pb.Conne
 	transportCreds := insecure.NewCredentials()
 	//Establish a grpc connection to the other node using addres and transport credentials
 	address := ":" + strconv.Itoa(int(announcement.NodeID))
-	fmt.Println("Hello! Now dialing")
+	fmt.Println("Dialing...")
 	conn, err := grpc.Dial(address, grpc.WithTransportCredentials(transportCreds))
 	if err != nil {
 		log.Fatalf("Failed to connect  ... : %v\n", err)
 	}
-	fmt.Println("Hello! Now making a new node")
+	fmt.Println("Making a new node")
 	//we have establised a new connection to the new node. We add it to the list of node connections
 	node := pb.NewNodeServiceClient(conn)
 	//Add the node we have connected to our list of nodes in the system.
@@ -70,9 +70,9 @@ func (n *NodeInfo) broadcastLeavingMessage() {
 	}
 }
 
+// This method is called to indicate that a node has left the critical section, which means we need to update the queue.
+// we need to find the next qeueud request, that is, the request in the queue with the smallest timestamp (indicating that it was sent earlier)
 func (n *NodeInfo) AnnounceLeave(ctx context.Context, announcement *pb.LeaveAnnouncement) (*pb.LeaveAnnouncementResponse, error) {
-	//This method is called to indicate that a node has left the critical section, which means we need to update the queue.
-	//we need to find the next qeueud request, that is, the request in the queue with the smallest timestamp (indicating that it was sent earlier)
 
 	//First we remove from the queue the request from the node which we have just learned has left the critical section, if it is there.
 	n.removeRequest(announcement.NodeID)
@@ -155,9 +155,9 @@ func (n *NodeInfo) EnterCriticalSectionDirectly(ctx context.Context, accessReque
 }
 
 func (n *NodeInfo) EnterCriticalSection() {
-	log.Printf("I HAVE JUST ENTERED THE CRITICAL ZONE ON PORT %v!", n.port)
+	log.Printf("ENTERED THE CRITICAL ZONE ON PORT %v!", n.port)
 	time.Sleep(time.Millisecond * time.Duration(1000))
-	log.Printf("I AM LEAVING THE CRITICAL ZONE NOW. PORT %v out!", n.port)
+	log.Printf("LEAVING THE CRITICAL ZONE ON PORT %v out!", n.port)
 	time.Sleep(time.Millisecond * time.Duration(1000))
 
 	// Next we need to inform all the connected nodes that we are releasing the critical section so that another node may be granted access.
@@ -199,49 +199,50 @@ func (n NodeInfo) RequestAccess(ctx context.Context, accessRequest *pb.AccessReq
 }
 
 func FindAnAvailablePort(standardPort int) (int, error) {
-	fmt.Println("Hello, I am in the method for port finding")
+	fmt.Println("Trying to find a port...")
 	for port := standardPort; port < standardPort+100; port++ {
-		fmt.Println("HEEEEELOOOOOO I AM LOOKING FOR A PORT?")
 		addr := "localhost:" + strconv.Itoa(port)
 		listener, err := net.Listen("tcp", addr)
 		if err != nil {
 			//The port is in use, increment and try the next one
 			continue
+		} else {
+			fmt.Println("Connected to port:", port)
+			//if no error, the port is free. Return the port.
+			defer listener.Close()
+			return port, nil
 		}
-		fmt.Println("HELLO! I found a port, what joy.")
-		//if no error, the port is free. Return the port.
-		listener.Close()
-		return port, nil
+
 	}
-	return 0, fmt.Errorf("no free port found in the range")
+	return 0, fmt.Errorf("No free port found in the range")
 }
 
 func EstablishConnectionToAllSystemClients(standardPort int, thisPort int, transportCreds credentials.TransportCredentials, connectedNodes []pb.NodeServiceClient) {
 	//We cycle through the available ports in order to find the other nodes in the system and establish connections.
 	for port := standardPort; port < standardPort+100; port++ {
-		fmt.Printf("The tried port is %v, this port is %v", port, thisPort)
 		if port != thisPort {
 			address := "localhost:" + strconv.Itoa(port)
-			fmt.Println("Hello. Checking this port: " + address)
+			fmt.Printf("Trying port - %v", port)
 			conn, err := grpc.Dial(address, grpc.WithTransportCredentials(transportCreds))
-			if err == nil { //THE PROBLEM IS THIS: THIS METHOD DOES NOT RETURN AN ERROR JUST BECAUSE THERE IS NO NODE ON THE PORT ...
-				//SO THE CODE THINKS ITS FOUND A NEW NODE EVEN WHEN THERE IS NONE. AND THE PROGRAM ONLY CRASHES ONCE
-				//THE CODE CALLS THE ANNOUNCECONNECTION METHOD ON THE NODE. SO HOW CAN WE CHECK IF THERE IS ACTUALLY A NODE ON THE PORT?
+			if err != nil {
+
 				fmt.Println("Hurrah! We found another node.")
+				fmt.Println(conn.Target())
 				//We have found a node in the system at the port and established connection successfully.
 				node := pb.NewNodeServiceClient(conn)
 				//Send announcement of new connection to the node we have connected to.
-				_, err := node.AnnounceConnection(context.Background(), &pb.ConnectionAnnouncement{NodeID: int32(port)})
+				confirmed, err := node.AnnounceConnection(context.Background(), &pb.ConnectionAnnouncement{NodeID: int32(port)})
 				if err != nil {
+					fmt.Println(confirmed)
 					log.Fatalf("Oh no! The node sent an announcement of a new connection but did not recieve a confirmation in return. Error: %v", err)
 				}
+				fmt.Println("Connection announced:", confirmed.String())
 				//Add the node we have connected to to our list of nodes in the system.
 				nodeInfo := NodeInfo{port: int32(port), client: node}
 				connectedNodes = append(connectedNodes, nodeInfo.client)
+			} else {
+				fmt.Println("No node found at port", port)
 			}
-			fmt.Println("No server here.")
-		} else {
-			fmt.Println("The ports are the same! Don't try to connect to yourself here...")
 		}
 	}
 }
@@ -262,8 +263,8 @@ func main() {
 	timestamp := 0
 	connectedNodes := []pb.NodeServiceClient{}
 
-	//First we need to establish connection to the other nodes in the system.
-	//In order to enble us to make remote procedure calls to other nodes with grpc
+	//First we need to establish connection to the other nodes in the system
+	//In order to enable us to make remote procedure calls to other nodes with grpc
 	//For the purposes of this excersize we decided to simply configure the IP addresses and ports of the nodes manually.
 	//To do this, we just specify a standard port and increment the port if the port is already in use and repeat until we find a free port.
 	//It might have been better to do some more dynamic node discovery system.
@@ -273,31 +274,32 @@ func main() {
 
 	standardPort := 8000
 	port, err := FindAnAvailablePort(standardPort)
-	fmt.Printf("Hello. I have found a port... The port is %v\n ", port)
 	if err != nil {
-		log.Fatalf("Oh no! Failed to find a port")
+		log.Fatalf("Failed to find port!: %v\n ", port)
 	}
+	fmt.Printf("Found port: %v\n ", port)
 
-	fmt.Println("Hello. I am registering the server now...")
+	fmt.Println("Registering the server now...")
 	// Create a gRPC server
 	grpcServer := grpc.NewServer()
 	serverStructure := Server{}
 	// Register your gRPC service with the server
 	pb.RegisterNodeServiceServer(grpcServer, &serverStructure)
-	fmt.Println("Hello, still here. About to listen.")
 
 	//initialize the listener on the specified port. net.Listen listens for incoming connections with tcp socket
+	fmt.Println("Listening for tcp...")
 	listen, err := net.Listen("tcp", "localhost:"+strconv.Itoa(port))
 	if err != nil {
 		log.Fatalf("Could not listen at port: %d : %v", port, err)
 	}
-	fmt.Println("Having a listen still.")
+	fmt.Println("Listening on port", port)
 	go func() {
 		// Start gRPC server in a goroutine
 		err := grpcServer.Serve(listen)
 		if err != nil {
 			log.Fatalf("Failed to start gRPC server: %v", err)
 		}
+		fmt.Println("gRPC server started")
 	}()
 
 	//When a port is found, next we need to establish connections to the existing nodes in the system.
@@ -308,21 +310,21 @@ func main() {
 	transportCreds := insecure.NewCredentials()
 	//Establish a grpc connection to the other node using addres and transport credentials
 	address := ":" + strconv.Itoa(port)
-	fmt.Println("Hello! Just made the address")
+	fmt.Println("Made address:", address)
 	conn, err := grpc.Dial(address, grpc.WithTransportCredentials(transportCreds))
 	if err != nil {
 		log.Fatalf("Failed to connect  ... : %v\n", err)
 	}
-	fmt.Println("Hello! Just dialed")
+	fmt.Println("Client connection to address: ", address)
 
 	//Create a grpc client instance to represent local node (this node).
 	//In a way we are establishing connection to our own node ... which may seem weird, but it does make sense:
 	//The idea is to have a local representation of this node, that can interact with other nodes in the system,
 	//since it is a client that can call remote procedures and recieve remote procedure calls through grpc.
 	thisNode := pb.NewNodeServiceClient(conn)
-	fmt.Println("Hello! Just made a client for this node.")
+	fmt.Println("New client for this node generated:", thisNode)
 
-	fmt.Println("Hello. Attempting to connect to all clients in system.")
+	fmt.Println("Attempting to connect to all clients in system...")
 	//Now we want to establish connection to all other nodes in the system.
 	EstablishConnectionToAllSystemClients(standardPort, port, transportCreds, connectedNodes)
 
@@ -330,9 +332,9 @@ func main() {
 
 	//Next: We try to inter the critical section
 	//generate node
-	fmt.Println("Hello. Now making a node.")
+	fmt.Println("Making a node...")
 	node := &NodeInfo{port: int32(port), client: thisNode, connectedNodes: connectedNodes, timestamp: int32(timestamp)}
-	fmt.Println("Hello. Now attempting to access the critical zone")
+	fmt.Println("Attempting to access the critical zone...")
 	node.AttemptToAccessTheCriticalZone(int32(port))
 	select {}
 }
