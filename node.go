@@ -39,7 +39,7 @@ func (s *Server) IExist(context.Context, *pb.Confirmation) (*pb.Confirmation, er
 func (s *Server) AnnounceQueuedRequest(ctx context.Context, queuedRequest *pb.AccessRequest) (*pb.Confirmation, error) {
 	//This method is called when a node is not granted access by all the nodes it requested access from.
 	//In order to maintain a consistent queue, we check if the queued request from the node is already in the queue, and if it isn't we add it.
-	fmt.Println("I HAVE RECIEVED A CALL TO UPDATE MY QUEUE")
+	//fmt.Println("I HAVE RECIEVED A CALL TO UPDATE MY QUEUE")
 	var isAlreadyQueued = false
 	for _, request := range s.node.localQueue {
 		if request.NodeID == queuedRequest.NodeID {
@@ -81,7 +81,7 @@ func (s *Server) AnnounceConnection(ctx context.Context, announcement *pb.Connec
 
 func (s *Server) LeaveCriticalSection() {
 
-	log.Printf("I AM LEAVING THE CRITICAL ZONE NOW. PORT %v out!", s.node.port)
+	log.Printf("\n\n * * * I AM LEAVING THE CRITICAL ZONE NOW. PORT %v out! * * * \n\n\n", s.node.port)
 	s.node.inCriticalSection = false
 
 	// Next we need to inform all the connected nodes that we are releasing the critical section so that another node may be granted access.
@@ -92,7 +92,7 @@ func (s *Server) LeaveCriticalSection() {
 	for _, connectedNode := range s.node.connectedNodes {
 		node := connectedNodesMapClient[connectedNode]
 		if node.port != s.node.port {
-			fmt.Print("I AM NOW ANNOUNCING TO A NODE THAT I AM LEAVING")
+			//fmt.Print("I AM NOW ANNOUNCING TO A NODE THAT I AM LEAVING")
 			_, err := connectedNode.AnnounceLeave(context.Background(), &pb.LeaveAnnouncement{
 				NodeID: s.node.port, // Identify this node
 			})
@@ -143,18 +143,18 @@ func (s *Server) RequestAccess(ctx context.Context, accessRequest *pb.AccessRequ
 	senderTimestamp := accessRequest.Timestamp
 	localTimestamp := s.node.timestamp
 
-	fmt.Println("I HAVE RECIEVED AN ACCESS REQUEST")
+	//fmt.Println("I HAVE RECIEVED AN ACCESS REQUEST")
 	//If the current node is not in the critical section, and if the requesting node has a lower time stamp, grant access, otherwise deny access.
 	granted := false
 	if !s.node.inCriticalSection && senderTimestamp < localTimestamp || (!s.node.inCriticalSection && senderTimestamp == localTimestamp && accessRequest.NodeID > s.node.port) {
 		granted = true
-		fmt.Printf("I HAVE DECIDED TO GRANT ACCESS! MY TIMESTAMP IS: %v! AM I IN THE CRITICAL SECTION? %t\n}", s.node.timestamp, s.node.inCriticalSection)
+		//fmt.Printf("I HAVE DECIDED TO GRANT ACCESS! MY TIMESTAMP IS: %v! AM I IN THE CRITICAL SECTION? %t\n}", s.node.timestamp, s.node.inCriticalSection)
 	} else {
 		granted = false
 		//if the above conditions are not met we queue the request until it becomes its turn to enter the critical section
 		s.node.localQueue = append(s.node.localQueue, pb.AccessRequest{NodeID: accessRequest.NodeID, Timestamp: accessRequest.Timestamp})
-		fmt.Printf("I HAVE DECIDED TO DENY ACCESS! MY TIMESTAMP IS: %v! AM I IN THE CRITICAL SECTION? %t\n", s.node.timestamp, s.node.inCriticalSection)
-		fmt.Printf("I HAVE ADDED THE REQUEST TO MY LOCAL QUEUE. THE NUMBER OF REQUESTS IN MY QUEUE IS: %v\n", len(s.node.localQueue))
+		//fmt.Printf("I HAVE DECIDED TO DENY ACCESS! MY TIMESTAMP IS: %v! AM I IN THE CRITICAL SECTION? %t\n", s.node.timestamp, s.node.inCriticalSection)
+		//fmt.Printf("I HAVE ADDED THE REQUEST TO MY LOCAL QUEUE. THE NUMBER OF REQUESTS IN MY QUEUE IS: %v\n", len(s.node.localQueue))
 		s.node.ListRequestsInQueue()
 	}
 	//We return a response with information on whether or not the request has been granted.
@@ -163,7 +163,7 @@ func (s *Server) RequestAccess(ctx context.Context, accessRequest *pb.AccessRequ
 func (s *Server) AnnounceLeave(ctx context.Context, announcement *pb.LeaveAnnouncement) (*pb.LeaveAnnouncementResponse, error) {
 	//This method is called to indicate that a node has left the critical section, which means we need to update the queue.
 	//We remove from the queue the request from the node which we have just learned has left the critical section, if it is there.
-	fmt.Printf("I AM REMOVING A NODE WITH THE ID: %v", announcement.NodeID)
+	fmt.Printf("\n ######### %v ########## \n\n", announcement.NodeID)
 	s.node.removeRequest(announcement.NodeID)
 	return &pb.LeaveAnnouncementResponse{}, nil
 }
@@ -172,56 +172,50 @@ func (s *Server) AttemptToAccessTheCriticalZone(port int32) {
 	for {
 		//if already in the critical section, have a wait and try again.
 		if s.node.inCriticalSection {
-			time.Sleep(time.Millisecond * time.Duration(1000))
+			time.Sleep(time.Millisecond * time.Duration(200))
+			fmt.Println("* In the zone *")
 			continue
 		}
 		// We check if the request is already in the local queue. If so, we don't want to send another request.
 		if s.isRequestInQueue(port) {
-			fmt.Println("I already made a request... Waiting...\n")
-			time.Sleep(time.Millisecond * time.Duration(1000))
+			fmt.Println(" Waiting ...")
+			time.Sleep(time.Millisecond * time.Duration(200))
 			continue
 		}
 
 		var accessGrantedCount = 0
-		fmt.Printf("I am starting over the loop! The access granted count is %v\n", accessGrantedCount)
+		//fmt.Printf("I am starting over the loop! The access granted count is %v\n", accessGrantedCount)
 		if s.node.inCriticalSection {
 			fmt.Println("OBS: I am in the critical section at the start of the loop. This seems wrong?")
 		}
 		if !s.node.inCriticalSection {
-			fmt.Println("I am not in the critical section")
-			fmt.Printf("THE LENGTH OF THE LIST OF CONNECTED NODES IS: %v\n", len(s.node.connectedNodes))
-			fmt.Print("THE CONNECTED NODES AT THIS TIME ARE \n\n")
-
-			for _, connectedNode := range s.node.connectedNodes {
-				node := connectedNodesMapClient[connectedNode]
-				fmt.Printf("THIS IS THE PORT OF A CONNECTED NODE: %d\n", node.port)
-			}
+			//fmt.Println("I am not in the critical section")
+			//fmt.Printf("THE LENGTH OF THE LIST OF CONNECTED NODES IS: %v\n", len(s.node.connectedNodes))
+			//fmt.Print("THE CONNECTED NODES AT THIS TIME ARE \n\n")
 
 			//We update the timestamp before we send out a request to the connected nodes.
 			s.node.timestamp++
 			for _, connectedNode := range s.node.connectedNodes {
 				node := connectedNodesMapClient[connectedNode]
-				fmt.Printf("\n\nI AM NOW TRYING TO GET ACCESS: I AM GOING THROUGH THE CONNECTED NODES: I AM CURRENTLY LOOKING AT NODE WITH PORT, %v\n", node.port)
+				//fmt.Printf("\n\nI AM NOW TRYING TO GET ACCESS: I AM GOING THROUGH THE CONNECTED NODES: I AM CURRENTLY LOOKING AT NODE WITH PORT, %v\n", node.port)
 				//We don't send an access request to ourself, therefore skip node's own port.
 				if node.port != s.node.port {
-					fmt.Printf("Now sending out access request to a node with the port: %v\n", node.port)
+					//fmt.Printf("Now sending out access request to a node with the port: %v\n", node.port)
 					accessRequestResponse, err := connectedNode.RequestAccess(context.Background(), &pb.AccessRequest{NodeID: port, Timestamp: s.node.timestamp})
 					if err != nil {
 						log.Fatalf("Oh no! Something went wrong while requesting access to enter critical section. The error is: %v", err)
 					}
 					if accessRequestResponse.Granted {
-						fmt.Printf("Access was granted by node %v\n", node.port)
+						//fmt.Printf("Access was granted by node %v\n", node.port)
 						accessGrantedCount++
 					} else {
-						fmt.Printf("Access was denied by node %v\n", node.port)
+						//fmt.Printf("Access was denied by node %v\n", node.port)
 					}
 
-					if accessRequestResponse.Timestamp > s.node.timestamp {
-						s.node.timestamp = accessRequestResponse.Timestamp
-					}
+					s.node.timestamp++
 				}
 			}
-			fmt.Println("I AM NOW DONE CYCLING THROUGH THE COMPLETED NODES. I WILL NOW LOOK AT THE RESULTS ALL TOGETHER.")
+			//fmt.Println("I AM NOW DONE CYCLING THROUGH THE COMPLETED NODES. I WILL NOW LOOK AT THE RESULTS ALL TOGETHER.")
 			//We have now cycled through every node, sent out a request and recieved a response.
 			//We check if the number of responses granting access matches the number of connected nodes (minus one, since we don't send the request to this node!)
 			if accessGrantedCount == len(s.node.connectedNodes)-1 {
@@ -243,9 +237,6 @@ func (s *Server) AttemptToAccessTheCriticalZone(port int32) {
 					node.client.AnnounceQueuedRequest(context.Background(), &pb.AccessRequest{NodeID: port, Timestamp: s.node.timestamp})
 				}
 			}
-
-			fmt.Printf("I AM ADDING MY REQUEST TO MY QUEUE. THE NUMBER OF REQUESTS IN MY QUEUE AT THIS TIME IS: %v\n", len(s.node.localQueue))
-			s.node.ListRequestsInQueue()
 		}
 	}
 }
@@ -257,7 +248,7 @@ func (s *Server) EnterCriticalSectionDirectly(ctx context.Context, accessRequest
 }
 
 func (s *Server) EnterCriticalSection() {
-	log.Printf("* * * I HAVE JUST ENTERED THE CRITICAL ZONE ON PORT %v! * * * ", s.node.port)
+	log.Printf("\n\n* * * I HAVE JUST ENTERED THE CRITICAL ZONE ON PORT %v! * * * \n\n\n", s.node.port)
 	s.node.inCriticalSection = true
 	time.Sleep(time.Millisecond * time.Duration(5000))
 	//We update the timestamp ... to ensure that future requests reflect the most recent state. I am not 100 % sure this is necessary...
@@ -297,7 +288,7 @@ func (s *Server) EstablishConnectionToAllOtherNodes(standardPort int, thisPort i
 	for port := standardPort; port < standardPort+100; port++ {
 		if port != thisPort {
 			address := "localhost:" + strconv.Itoa(port)
-			fmt.Println("Hello. Checking this port: " + address)
+			//fmt.Println("Hello. Checking this port: " + address)
 			conn, err := grpc.Dial(address, grpc.WithTransportCredentials(transportCreds))
 			if err == nil {
 				//OBS OBS OBS: THE PROBLEM IS THIS: THIS METHOD DOES NOT RETURN AN ERROR JUST BECAUSE THERE IS NO NODE ON THE PORT ...
@@ -325,10 +316,8 @@ func (s *Server) EstablishConnectionToAllOtherNodes(standardPort int, thisPort i
 				if err != nil {
 					log.Fatalf("Oh no! The node sent an announcement of a new connection but did not recieve a confirmation in return. Error: %v", err)
 				}
-				fmt.Println("SENDING THE ANNOUNCEMENT SEEMS TO HAVE GONE OK?")
+				//fmt.Println("SENDING THE ANNOUNCEMENT SEEMS TO HAVE GONE OK?")
 			}
-		} else {
-			fmt.Println("The ports are the same! Don't try to connect to yourself here...")
 		}
 	}
 }
@@ -367,7 +356,7 @@ func main() {
 
 	standardPort := 8000
 	port, err := FindAnAvailablePort(standardPort)
-	fmt.Printf("Hello. I have found a port... The port is %v\n ", port)
+	fmt.Printf("THE PORT IS: %v\n ", port)
 	if err != nil {
 		log.Fatalf("Oh no! Failed to find a port")
 	}
@@ -417,16 +406,13 @@ func main() {
 	node := &NodeInfo{port: int32(port), client: thisNodeClient, connectedNodes: connectedNodes, timestamp: int32(timestamp)}
 	connectedNodesMapPort[int32(port)] = *node
 	connectedNodesMapClient[thisNodeClient] = *node
-	fmt.Printf("I JUST ADDED THE CLIENT TO THE CLIENT MAP. THE PORT OF THE NODE AT THIS TIME IS : %v\n The PORT denoted 'port' is: %v \n", node.port, port)
 	server.node = *node
 
-	fmt.Println("Hello. Attempting to connect to all clients in system.")
 	//Now we want to establish connection to all other nodes in the system.
 	server.EstablishConnectionToAllOtherNodes(standardPort, port, transportCreds, connectedNodes)
 	//We have now established connection to all other nodes in the system, notified them, and they have established connections back in return.
 
 	//Next: We try to inter the critical section
-	fmt.Println("Hello. Now attempting to access the critical zone")
 	go server.AttemptToAccessTheCriticalZone(int32(port))
 
 	select {}
