@@ -59,8 +59,16 @@ func (s *Server) AnnounceConnection(ctx context.Context, announcement *pb.Connec
 	return &pb.Confirmation{}, nil
 }
 
-func (s *Server) broadcastLeavingMessage() {
-	//We need to notify other connected nodes that this node is leaving the critical section.
+func (s *Server) LeaveCriticalSection() {
+
+	log.Printf("I AM LEAVING THE CRITICAL ZONE NOW. PORT %v out!", s.node.port)
+	s.node.inCriticalSection = false
+
+	// Next we need to inform all the connected nodes that we are releasing the critical section so that another node may be granted access.
+	// We do this by calling the method AnnounceLeave on all connected nodes, which handles the logic of getting the next request from the queued requests and handling it.
+
+	//We notify other connected nodes that this node is leaving the critical section.
+	//We do this so that they remove the node from their local queue, if it is there.
 	for _, connectedNode := range s.node.connectedNodes {
 		node := connectedNodesMapClient[connectedNode]
 		if node.port != s.node.port {
@@ -72,37 +80,12 @@ func (s *Server) broadcastLeavingMessage() {
 			}
 		}
 	}
-}
 
-func (s *Server) RequestAccess(ctx context.Context, accessRequest *pb.AccessRequest) (*pb.AccessRequestResponse, error) {
-
-	senderTimestamp := accessRequest.Timestamp
-	localTimestamp := s.node.timestamp
-
-	s.node.localQueue = append(s.node.localQueue, pb.AccessRequest{NodeID: accessRequest.NodeID, Timestamp: senderTimestamp})
-	fmt.Println("I HAVE RECIEVED AN ACCESS REQUEST")
-	//If the current node is not in the critical section, and if the requesting node has a lower time stamp, grant access, otherwise deny access.
-	granted := false
-	if !s.node.inCriticalSection && senderTimestamp < localTimestamp || (senderTimestamp == localTimestamp && accessRequest.NodeID < s.node.port) {
-		granted = true
-	} else {
-		granted = false
-		//if the above conditions are not met we queue the request until it becomes its turn to enter the critical section
-		s.node.localQueue = append(s.node.localQueue, pb.AccessRequest{NodeID: accessRequest.NodeID, Timestamp: accessRequest.Timestamp})
-		fmt.Println("I HAVE DECIDED TO DENY ACCESS! AM I IN THE CRITICAL SECTION? %s", s.node.inCriticalSection)
-	}
-	//We return a response with information on whether or not the request has been granted.
-	return &pb.AccessRequestResponse{Granted: granted, Timestamp: localTimestamp}, nil
-}
-func (s *Server) AnnounceLeave(ctx context.Context, announcement *pb.LeaveAnnouncement) (*pb.LeaveAnnouncementResponse, error) {
-	//This method is called to indicate that a node has left the critical section, which means we need to update the queue.
-	//we need to find the next qeueud request, that is, the request in the queue with the smallest timestamp (indicating that it was sent earlier)
-
-	//First we remove from the queue the request from the node which we have just learned has left the critical section, if it is there.
-	s.node.removeRequest(announcement.NodeID)
+	//Next we need to tell the node that sent the next request in the queue that it is allowed to enter the critical section.
+	//We do that here to avoid every node recieving a leaveAnnouncement telling the next node what to do at once.
 
 	//We ensure the localQueue is sorted by timestamp in ascending order
-	//We can sort the queue like this, where we specify a function which is used to sort the contents of the queue. Clever!
+	//(We can sort the queue like this, where we specify a function which is used to sort the contents of the queue. Clever!)
 	sort.Slice(s.node.localQueue, func(i, j int) bool {
 		return s.node.localQueue[i].Timestamp < s.node.localQueue[j].Timestamp
 	})
@@ -112,31 +95,70 @@ func (s *Server) AnnounceLeave(ctx context.Context, announcement *pb.LeaveAnnoun
 		nextRequest := s.node.localQueue[0]
 
 		//find sender ID
-		senderNodeID := nextRequest.NodeID
+		nextRequestSenderNodeID := nextRequest.NodeID
 		// Find the corresponding connected node
-		senderNode := connectedNodesMapPort[senderNodeID]
-		//we assume that all nodes have the maintain a queue that is consistent with the queue in all other nodes. This means we don't need to go through
+		nextRequestSenderNode := connectedNodesMapPort[nextRequestSenderNodeID]
+		//we assume that all nodes maintain a queue that is consistent with the queue in all other nodes. This means we don't need to go through
 		//a whole lot of figuring out if all the nodes agree when we get out the next request from the queue. Instead, we can just tell the node
 		//which sent the request we got out from the queue that it is free to go to the critical section directly (using an rpc call).
 
-		senderNode.client.EnterCriticalSectionDirectly(context.Background(), &pb.AccessRequest{NodeID: senderNodeID, Timestamp: s.node.timestamp})
+		fmt.Printf("NOW TELLING NODE %v TO ENTER THE CRITICAL SECTION DIRECTLY", nextRequestSenderNodeID)
+		go nextRequestSenderNode.client.EnterCriticalSectionDirectly(context.Background(), &pb.AccessRequest{NodeID: nextRequestSenderNodeID, Timestamp: s.node.timestamp})
 
 		// We then remove this request from the local queue, as it has been processed
-		// We remove it only from the local queue, as the request will be removed from all other nodes queues when the request has been granted and the node
-		//announces that it is leaving the critical section.
-		if len(s.node.localQueue) > 0 {
-			s.node.localQueue = s.node.localQueue[1:]
-		}
+		// We remove it only from the local queue, as the request has already been removed from all other node's queues when node
+		//announced that it is leaving the critical section.
+		s.node.removeRequest(nextRequest.NodeID)
+		s.node.ListRequestsInQueue()
+
+		//OBS OBS OBS: Right now I am confused and can't tell why we don't just remove this request by announcing to ourselves we are leaving?
 	}
+
+}
+
+func (s *Server) RequestAccess(ctx context.Context, accessRequest *pb.AccessRequest) (*pb.AccessRequestResponse, error) {
+
+	senderTimestamp := accessRequest.Timestamp
+	localTimestamp := s.node.timestamp
+
+	fmt.Println("I HAVE RECIEVED AN ACCESS REQUEST")
+	//If the current node is not in the critical section, and if the requesting node has a lower time stamp, grant access, otherwise deny access.
+	granted := false
+	if !s.node.inCriticalSection && senderTimestamp < localTimestamp || (!s.node.inCriticalSection && senderTimestamp == localTimestamp && accessRequest.NodeID > s.node.port) {
+		granted = true
+		fmt.Printf("I HAVE DECIDED TO GRANT ACCESS! MY TIMESTAMP IS: %v! AM I IN THE CRITICAL SECTION? %t\n}", s.node.timestamp, s.node.inCriticalSection)
+	} else {
+		granted = false
+		//if the above conditions are not met we queue the request until it becomes its turn to enter the critical section
+		s.node.localQueue = append(s.node.localQueue, pb.AccessRequest{NodeID: accessRequest.NodeID, Timestamp: accessRequest.Timestamp})
+		fmt.Printf("I HAVE DECIDED TO DENY ACCESS! MY TIMESTAMP IS: %v! AM I IN THE CRITICAL SECTION? %t\n", s.node.timestamp, s.node.inCriticalSection)
+		fmt.Printf("I HAVE ADDED THE REQUEST TO MY LOCAL QUEUE. THE NUMBER OF REQUESTS IN MY QUEUE IS: %v\n", len(s.node.localQueue))
+		s.node.ListRequestsInQueue()
+	}
+	//We return a response with information on whether or not the request has been granted.
+	return &pb.AccessRequestResponse{Granted: granted, Timestamp: localTimestamp}, nil
+}
+func (s *Server) AnnounceLeave(ctx context.Context, announcement *pb.LeaveAnnouncement) (*pb.LeaveAnnouncementResponse, error) {
+	//This method is called to indicate that a node has left the critical section, which means we need to update the queue.
+	//We remove from the queue the request from the node which we have just learned has left the critical section, if it is there.
+	s.node.removeRequest(announcement.NodeID)
 	return &pb.LeaveAnnouncementResponse{}, nil
 }
 
 func (s *Server) AttemptToAccessTheCriticalZone(port int32) {
 	for {
-		if s.node.inCriticalSection { //if already in the critical section, have a wait and try again.
+		//if already in the critical section, have a wait and try again.
+		if s.node.inCriticalSection {
 			time.Sleep(time.Millisecond * time.Duration(1000))
 			continue
 		}
+		// We check if the request is already in the local queue. If so, we don't want to send another request.
+		if s.isRequestInQueue(port) {
+			fmt.Println("I already made a request... Waiting...\n")
+			time.Sleep(time.Millisecond * time.Duration(1000))
+			continue
+		}
+
 		var accessGrantedCount = 0
 		fmt.Printf("I am starting over the loop! The access granted count is %v\n", accessGrantedCount)
 		if s.node.inCriticalSection {
@@ -151,6 +173,9 @@ func (s *Server) AttemptToAccessTheCriticalZone(port int32) {
 				node := connectedNodesMapClient[connectedNode]
 				fmt.Printf("THIS IS THE PORT OF A CONNECTED NODE: %d\n", node.port)
 			}
+
+			//We update the timestamp before we send out a request to the connected nodes.
+			s.node.timestamp++
 			for _, connectedNode := range s.node.connectedNodes {
 				node := connectedNodesMapClient[connectedNode]
 				fmt.Printf("\n\nI AM NOW TRYING TO GET ACCESS: I AM GOING THROUGH THE CONNECTED NODES: I AM CURRENTLY LOOKING AT NODE WITH PORT, %v\n", node.port)
@@ -167,13 +192,10 @@ func (s *Server) AttemptToAccessTheCriticalZone(port int32) {
 					} else {
 						fmt.Printf("Access was denied by node %v\n", node.port)
 					}
-					//We need to increment the logical clock timestamp
-					s.node.timestamp = UpdateTimestamp(accessRequestResponse.Timestamp, s.node.timestamp)
 
 					if accessRequestResponse.Timestamp > s.node.timestamp {
 						s.node.timestamp = accessRequestResponse.Timestamp
 					}
-					s.node.timestamp++
 				}
 			}
 			fmt.Println("I AM NOW DONE CYCLING THROUGH THE COMPLETED NODES. I WILL NOW LOOK AT THE RESULTS ALL TOGETHER.")
@@ -183,8 +205,7 @@ func (s *Server) AttemptToAccessTheCriticalZone(port int32) {
 				fmt.Println("THE NUMBER OF NODES GRANTING ACCESS IS EQUAL TO THE NUMBER OF CONNECTED NODES MINUS ONE: NOW ENTERING THE SECTION")
 				//If it matches we enter (and leave) the critical section
 				s.EnterCriticalSection()
-				//After leaving we reset the inCriticalSection and accesGrantedCount variables.
-				s.node.inCriticalSection = false
+				//we reset the inCriticalSection and accesGrantedCount variables.
 				accessGrantedCount = 0
 			} else {
 				//If all nodes did not grant access, we instead need to queue our request. This is already handled in each node by the call to RequestAccess,
@@ -195,17 +216,16 @@ func (s *Server) AttemptToAccessTheCriticalZone(port int32) {
 				//There is a situation where nodes disagree where the queues become inconsistent between nodes which is not what we want.....
 				fmt.Printf("THE NUMBER OF NODES GRANTING ACCESS IS NOT EQUAL TO THE NUMBER OF CONNECTED NODES MINUS ONE. CONNECTED NODES: %d. NODES GRANTING ACCESS: %d\n", len(s.node.connectedNodes), accessGrantedCount)
 				s.node.localQueue = append(s.node.localQueue, pb.AccessRequest{NodeID: port, Timestamp: s.node.timestamp})
-				fmt.Printf("I AM ADDING MY REQYEST TO MY QUEUE. THE NUMBER OF REQUESTS IN MY QUEUE AT THIS TIME IS: %v\n", len(s.node.localQueue))
+				fmt.Printf("I AM ADDING MY REQUEST TO MY QUEUE. THE NUMBER OF REQUESTS IN MY QUEUE AT THIS TIME IS: %v\n", len(s.node.localQueue))
+				s.node.ListRequestsInQueue()
 			}
 		}
-		time.Sleep(time.Millisecond * time.Duration(10000))
 	}
 }
 
 func (s *Server) EnterCriticalSectionDirectly(ctx context.Context, accessRequest *pb.AccessRequest) (*pb.Confirmation, error) {
-	if !s.node.inCriticalSection { //since multiple nodes will tell the node to enter the critical section, we check if it's already there.
-		s.EnterCriticalSection()
-	}
+	fmt.Printf("THE NODE WITH THE ID %d HAS JUST ASKED ME THE ENTER THE CRITICAL SECTION DIRECTLY!\n", accessRequest.NodeID)
+	s.EnterCriticalSection()
 	return &pb.Confirmation{}, nil
 }
 
@@ -213,17 +233,9 @@ func (s *Server) EnterCriticalSection() {
 	log.Printf("I HAVE JUST ENTERED THE CRITICAL ZONE ON PORT %v!", s.node.port)
 	s.node.inCriticalSection = true
 	time.Sleep(time.Millisecond * time.Duration(10000))
-	log.Printf("I AM LEAVING THE CRITICAL ZONE NOW. PORT %v out!", s.node.port)
-	s.node.inCriticalSection = false
-	time.Sleep(time.Millisecond * time.Duration(10000))
-
-	// Next we need to inform all the connected nodes that we are releasing the critical section so that another node may be granted access.
-	// We do this by calling broadcastLeaveMessage which calls the method AnnounceLeave on all connected nodes, which handles the logic of getting the next
-	// request from the queued requests and handling it.
-	s.broadcastLeavingMessage()
-	//remove the request from the local queue. Since we don't need to call AnnounceLeave to our own node, we manually remove the request from the queue.
-	s.node.removeRequest(s.node.port)
-
+	//We update the timestamp ... to ensure that future requests reflect the most recent state. I am not 100 % sure this is necessary...
+	s.node.timestamp++
+	s.LeaveCriticalSection()
 }
 
 func (n *NodeInfo) removeRequest(nodeID int32) {
@@ -292,15 +304,22 @@ func (s *Server) EstablishConnectionToAllOtherNodes(standardPort int, thisPort i
 	}
 }
 
-func UpdateTimestamp(incoming int32, local int32) (timestamp int32) {
-	// Update the logical clock timestamp if the received timestamp is greater, then increment.
-	if incoming > local {
-		timestamp = incoming
-	} else {
-		timestamp = local
+// Function to check if a request is already in the local queue
+func (s *Server) isRequestInQueue(nodeID int32) bool {
+	for _, req := range s.node.localQueue {
+		if req.NodeID == nodeID {
+			return true
+		}
 	}
-	timestamp++
-	return int32(timestamp)
+	return false
+}
+
+func (n *NodeInfo) ListRequestsInQueue() {
+	fmt.Println("THESE ARE THE ELEMENTS IN MY LOCAL QUEUE: ")
+	for _, req := range n.localQueue {
+		fmt.Printf(" %v", req.NodeID)
+	}
+	fmt.Print("\n")
 }
 
 func main() {
@@ -379,6 +398,7 @@ func main() {
 
 	//Next: We try to inter the critical section
 	fmt.Println("Hello. Now attempting to access the critical zone")
-	server.AttemptToAccessTheCriticalZone(int32(port))
+	go server.AttemptToAccessTheCriticalZone(int32(port))
+
 	select {}
 }
