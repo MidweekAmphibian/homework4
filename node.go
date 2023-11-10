@@ -169,27 +169,27 @@ func (s *Server) AttemptToAccessTheCriticalZone(port int32) {
 					}
 					s.node.timestamp++
 				}
-				fmt.Println("I AM NOW DONE CYCLING THROUGH THE COMPLETED NODES. I WILL NOW LOOK AT THE RESULTS ALL TOGETHER.")
-				//We have now cycled through every node, sent out a request and recieved a response.
-				//We check if the number of responses granting access matches the number of connected nodes (minus one, since we don't send the request to this node!)
-				if accessGrantedCount == len(s.node.connectedNodes)-1 {
-					fmt.Println("THE NUMBER OF NODES GRANTING ACCESS IS EQUAL TO THE NUMBER OF CONNECTED NODES MINUS ONE: NOW ENTERING THE SECTION")
-					//If it matches we enter (and leave) the critical section
-					s.EnterCriticalSection()
-					//After leaving we reset the inCriticalSection and accesGrantedCount variables.
-					inCriticalSection = false
-					accessGrantedCount = 0
-				} else {
-					//If all nodes did not grant access, we instead need to queue our request. This is already handled in each node by the call to RequestAccess,
-					//but since we have not called that method on this node, we need to add the request manually to the local queue. We will then handle the request
-					//in due time, the same way we handle the other requests in the queue.
+			}
+			fmt.Println("I AM NOW DONE CYCLING THROUGH THE COMPLETED NODES. I WILL NOW LOOK AT THE RESULTS ALL TOGETHER.")
+			//We have now cycled through every node, sent out a request and recieved a response.
+			//We check if the number of responses granting access matches the number of connected nodes (minus one, since we don't send the request to this node!)
+			if accessGrantedCount == len(s.node.connectedNodes)-1 {
+				fmt.Println("THE NUMBER OF NODES GRANTING ACCESS IS EQUAL TO THE NUMBER OF CONNECTED NODES MINUS ONE: NOW ENTERING THE SECTION")
+				//If it matches we enter (and leave) the critical section
+				s.EnterCriticalSection()
+				//After leaving we reset the inCriticalSection and accesGrantedCount variables.
+				inCriticalSection = false
+				accessGrantedCount = 0
+			} else {
+				//If all nodes did not grant access, we instead need to queue our request. This is already handled in each node by the call to RequestAccess,
+				//but since we have not called that method on this node, we need to add the request manually to the local queue. We will then handle the request
+				//in due time, the same way we handle the other requests in the queue.
 
-					//OBS OBS OBS OBS we should probably also send out a message to all nodes saying to queue the request from this node in case they didn't already to make sure we keep the queue consistent between nodes.
-					//There is a situation where nodes disagree where the queues become inconsistent between nodes which is not what we want.....
-					fmt.Printf("THE NUMBER OF NODES GRANTING ACCESS IS NOT EQUAL TO THE NUMBER OF CONNECTED NODES MINUS ONE. CONNECTED NODES: %d. NODES GRANTING ACCESS: %d\n", len(s.node.connectedNodes), accessGrantedCount)
-					fmt.Printf("I AM ADDING MY REQYEST TO MY QUEUE. THE NUMBER OF REQUESTS IN MY QUEUE AT THIS TIME IS: %v\n", len(s.node.localQueue))
-					s.node.localQueue = append(s.node.localQueue, pb.AccessRequest{NodeID: port, Timestamp: s.node.timestamp})
-				}
+				//OBS OBS OBS OBS we should probably also send out a message to all nodes saying to queue the request from this node in case they didn't already to make sure we keep the queue consistent between nodes.
+				//There is a situation where nodes disagree where the queues become inconsistent between nodes which is not what we want.....
+				fmt.Printf("THE NUMBER OF NODES GRANTING ACCESS IS NOT EQUAL TO THE NUMBER OF CONNECTED NODES MINUS ONE. CONNECTED NODES: %d. NODES GRANTING ACCESS: %d\n", len(s.node.connectedNodes), accessGrantedCount)
+				fmt.Printf("I AM ADDING MY REQYEST TO MY QUEUE. THE NUMBER OF REQUESTS IN MY QUEUE AT THIS TIME IS: %v\n", len(s.node.localQueue))
+				s.node.localQueue = append(s.node.localQueue, pb.AccessRequest{NodeID: port, Timestamp: s.node.timestamp})
 			}
 		}
 		time.Sleep(time.Millisecond * time.Duration(10000))
