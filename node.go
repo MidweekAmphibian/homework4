@@ -36,6 +36,26 @@ func (s *Server) IExist(context.Context, *pb.Confirmation) (*pb.Confirmation, er
 	return &pb.Confirmation{}, nil
 }
 
+func (s *Server) AnnounceQueuedRequest(ctx context.Context, queuedRequest *pb.AccessRequest) (*pb.Confirmation, error) {
+	//This method is called when a node is not granted access by all the nodes it requested access from.
+	//In order to maintain a consistent queue, we check if the queued request from the node is already in the queue, and if it isn't we add it.
+	fmt.Println("I HAVE RECIEVED A CALL TO UPDATE MY QUEUE")
+	var isAlreadyQueued = false
+	for _, request := range s.node.localQueue {
+		if request.NodeID == queuedRequest.NodeID {
+			isAlreadyQueued = true
+		}
+	}
+	if !isAlreadyQueued {
+		s.node.localQueue = append(s.node.localQueue, pb.AccessRequest{NodeID: queuedRequest.NodeID, Timestamp: queuedRequest.Timestamp})
+		fmt.Println("I JUST ADDED A REQUEST TO MY QUEUE WHICH I HAD NOT ADDED BEFORE. MY QUEUE NOW LOOKS LIKE THIS: ")
+		s.node.ListRequestsInQueue()
+	} else {
+		fmt.Println("THIS REQUESTS WAS ALREADY IN MY QUEUEUE")
+	}
+	return &pb.Confirmation{}, nil
+}
+
 func (s *Server) AnnounceConnection(ctx context.Context, announcement *pb.ConnectionAnnouncement) (*pb.Confirmation, error) {
 	//We have recieved a connection announcement, which means that a new node has established a connection to this client.
 	//We must also establish a connection to this client in return. We have the information we need from the ConnectionAnnouncement
@@ -72,6 +92,7 @@ func (s *Server) LeaveCriticalSection() {
 	for _, connectedNode := range s.node.connectedNodes {
 		node := connectedNodesMapClient[connectedNode]
 		if node.port != s.node.port {
+			fmt.Print("I AM NOW ANNOUNCING TO A NODE THAT I AM LEAVING")
 			_, err := connectedNode.AnnounceLeave(context.Background(), &pb.LeaveAnnouncement{
 				NodeID: s.node.port, // Identify this node
 			})
@@ -86,6 +107,7 @@ func (s *Server) LeaveCriticalSection() {
 
 	//We ensure the localQueue is sorted by timestamp in ascending order
 	//(We can sort the queue like this, where we specify a function which is used to sort the contents of the queue. Clever!)
+	//
 	sort.Slice(s.node.localQueue, func(i, j int) bool {
 		return s.node.localQueue[i].Timestamp < s.node.localQueue[j].Timestamp
 	})
@@ -141,6 +163,7 @@ func (s *Server) RequestAccess(ctx context.Context, accessRequest *pb.AccessRequ
 func (s *Server) AnnounceLeave(ctx context.Context, announcement *pb.LeaveAnnouncement) (*pb.LeaveAnnouncementResponse, error) {
 	//This method is called to indicate that a node has left the critical section, which means we need to update the queue.
 	//We remove from the queue the request from the node which we have just learned has left the critical section, if it is there.
+	fmt.Printf("I AM REMOVING A NODE WITH THE ID: %v", announcement.NodeID)
 	s.node.removeRequest(announcement.NodeID)
 	return &pb.LeaveAnnouncementResponse{}, nil
 }
@@ -208,33 +231,39 @@ func (s *Server) AttemptToAccessTheCriticalZone(port int32) {
 				//we reset the inCriticalSection and accesGrantedCount variables.
 				accessGrantedCount = 0
 			} else {
-				//If all nodes did not grant access, we instead need to queue our request. This is already handled in each node by the call to RequestAccess,
-				//but since we have not called that method on this node, we need to add the request manually to the local queue. We will then handle the request
-				//in due time, the same way we handle the other requests in the queue.
-
-				//OBS OBS OBS OBS we should probably also send out a message to all nodes saying to queue the request from this node in case they didn't already to make sure we keep the queue consistent between nodes.
-				//There is a situation where nodes disagree where the queues become inconsistent between nodes which is not what we want.....
 				fmt.Printf("THE NUMBER OF NODES GRANTING ACCESS IS NOT EQUAL TO THE NUMBER OF CONNECTED NODES MINUS ONE. CONNECTED NODES: %d. NODES GRANTING ACCESS: %d\n", len(s.node.connectedNodes), accessGrantedCount)
+				//If all nodes did not grant access, we instead need to queue our request.
+				//We will then handle the request in due time, the same way we handle the other requests in the queue.
 				s.node.localQueue = append(s.node.localQueue, pb.AccessRequest{NodeID: port, Timestamp: s.node.timestamp})
-				fmt.Printf("I AM ADDING MY REQUEST TO MY QUEUE. THE NUMBER OF REQUESTS IN MY QUEUE AT THIS TIME IS: %v\n", len(s.node.localQueue))
-				s.node.ListRequestsInQueue()
+				//Queuing this request is already handled in some nodes by the call to RequestAccess.
+				//However: If some nodes did grant access, they did not queue this request already. Therefore we cycle through all connected nodes and
+				//Tell them to add this request to their queue if they didn't already.
+				for _, connectedNode := range s.node.connectedNodes {
+					node := connectedNodesMapClient[connectedNode]
+					node.client.AnnounceQueuedRequest(context.Background(), &pb.AccessRequest{NodeID: port, Timestamp: s.node.timestamp})
+				}
 			}
+
+			fmt.Printf("I AM ADDING MY REQUEST TO MY QUEUE. THE NUMBER OF REQUESTS IN MY QUEUE AT THIS TIME IS: %v\n", len(s.node.localQueue))
+			s.node.ListRequestsInQueue()
 		}
 	}
 }
 
 func (s *Server) EnterCriticalSectionDirectly(ctx context.Context, accessRequest *pb.AccessRequest) (*pb.Confirmation, error) {
-	fmt.Printf("THE NODE WITH THE ID %d HAS JUST ASKED ME THE ENTER THE CRITICAL SECTION DIRECTLY!\n", accessRequest.NodeID)
+	fmt.Printf("THE NODE WITH THE ID %v HAS JUST ASKED ME THE ENTER THE CRITICAL SECTION DIRECTLY!\n", accessRequest.NodeID)
 	s.EnterCriticalSection()
 	return &pb.Confirmation{}, nil
 }
 
 func (s *Server) EnterCriticalSection() {
-	log.Printf("I HAVE JUST ENTERED THE CRITICAL ZONE ON PORT %v!", s.node.port)
+	log.Printf("* * * I HAVE JUST ENTERED THE CRITICAL ZONE ON PORT %v! * * * ", s.node.port)
 	s.node.inCriticalSection = true
-	time.Sleep(time.Millisecond * time.Duration(10000))
+	time.Sleep(time.Millisecond * time.Duration(5000))
 	//We update the timestamp ... to ensure that future requests reflect the most recent state. I am not 100 % sure this is necessary...
 	s.node.timestamp++
+	//We remove the request to enter the section from the queue if it is there.
+	s.node.removeRequest(s.node.port)
 	s.LeaveCriticalSection()
 }
 

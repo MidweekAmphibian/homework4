@@ -27,6 +27,7 @@ type NodeServiceClient interface {
 	AnnounceLeave(ctx context.Context, in *LeaveAnnouncement, opts ...grpc.CallOption) (*LeaveAnnouncementResponse, error)
 	EnterCriticalSectionDirectly(ctx context.Context, in *AccessRequest, opts ...grpc.CallOption) (*Confirmation, error)
 	IExist(ctx context.Context, in *Confirmation, opts ...grpc.CallOption) (*Confirmation, error)
+	AnnounceQueuedRequest(ctx context.Context, in *AccessRequest, opts ...grpc.CallOption) (*Confirmation, error)
 }
 
 type nodeServiceClient struct {
@@ -82,6 +83,15 @@ func (c *nodeServiceClient) IExist(ctx context.Context, in *Confirmation, opts .
 	return out, nil
 }
 
+func (c *nodeServiceClient) AnnounceQueuedRequest(ctx context.Context, in *AccessRequest, opts ...grpc.CallOption) (*Confirmation, error) {
+	out := new(Confirmation)
+	err := c.cc.Invoke(ctx, "/homework4.NodeService/AnnounceQueuedRequest", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // NodeServiceServer is the server API for NodeService service.
 // All implementations must embed UnimplementedNodeServiceServer
 // for forward compatibility
@@ -91,6 +101,7 @@ type NodeServiceServer interface {
 	AnnounceLeave(context.Context, *LeaveAnnouncement) (*LeaveAnnouncementResponse, error)
 	EnterCriticalSectionDirectly(context.Context, *AccessRequest) (*Confirmation, error)
 	IExist(context.Context, *Confirmation) (*Confirmation, error)
+	AnnounceQueuedRequest(context.Context, *AccessRequest) (*Confirmation, error)
 	mustEmbedUnimplementedNodeServiceServer()
 }
 
@@ -112,6 +123,9 @@ func (UnimplementedNodeServiceServer) EnterCriticalSectionDirectly(context.Conte
 }
 func (UnimplementedNodeServiceServer) IExist(context.Context, *Confirmation) (*Confirmation, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method IExist not implemented")
+}
+func (UnimplementedNodeServiceServer) AnnounceQueuedRequest(context.Context, *AccessRequest) (*Confirmation, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AnnounceQueuedRequest not implemented")
 }
 func (UnimplementedNodeServiceServer) mustEmbedUnimplementedNodeServiceServer() {}
 
@@ -216,6 +230,24 @@ func _NodeService_IExist_Handler(srv interface{}, ctx context.Context, dec func(
 	return interceptor(ctx, in, info, handler)
 }
 
+func _NodeService_AnnounceQueuedRequest_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AccessRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).AnnounceQueuedRequest(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/homework4.NodeService/AnnounceQueuedRequest",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).AnnounceQueuedRequest(ctx, req.(*AccessRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // NodeService_ServiceDesc is the grpc.ServiceDesc for NodeService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -242,6 +274,10 @@ var NodeService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "IExist",
 			Handler:    _NodeService_IExist_Handler,
+		},
+		{
+			MethodName: "AnnounceQueuedRequest",
+			Handler:    _NodeService_AnnounceQueuedRequest_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
