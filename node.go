@@ -285,7 +285,7 @@ func (s *Server) EnterCriticalSection() {
 
 	file, err := os.OpenFile("criticalsection.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 
-	mu.Lock()
+	//mu.Lock()
 
 	if err != nil {
 		log.Fatalf("Access to critical section denied!")
@@ -297,7 +297,7 @@ func (s *Server) EnterCriticalSection() {
 		}
 	}
 	defer file.Close()
-	defer mu.Unlock()
+	//defer mu.Unlock()
 
 	//We update the timestamp ... to ensure that future requests reflect the most recent state. I am not 100 % sure this is necessary...
 	s.node.timestamp++
