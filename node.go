@@ -283,7 +283,7 @@ func (s *Server) EnterCriticalSection() {
 	s.node.tryingToAccessCriticalSection = false
 	time.Sleep(time.Millisecond * time.Duration(5000))
 
-	file, err := os.OpenFile("criticalsection.txt", os.O_RDWR, 0644)
+	file, err := os.OpenFile("criticalsection.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 
 	mu.Lock()
 
@@ -291,7 +291,7 @@ func (s *Server) EnterCriticalSection() {
 		log.Fatalf("Access to critical section denied!")
 	} else {
 		fmt.Println("Access to critical section granted!")
-		err := os.WriteFile("criticalsection.txt", []byte(fmt.Sprintf("Last edit by port %v: %s \n", s.node.port, time.Now())), 0644)
+		_, err := file.WriteString("Last edit by port " + strconv.Itoa(int(s.node.port)) + " with timestamp " + strconv.Itoa(int(s.node.timestamp)) + "\n")
 		if err != nil {
 			log.Fatalf("Failed to modify critical section: %s", err)
 		}
