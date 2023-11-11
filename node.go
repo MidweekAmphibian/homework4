@@ -18,12 +18,13 @@ import (
 )
 
 type NodeInfo struct {
-	port              int32
-	client            pb.NodeServiceClient
-	connectedNodes    []pb.NodeServiceClient
-	inCriticalSection bool //A node can enter the critical section only if already there
-	timestamp         int32
-	localQueue        []pb.AccessRequest
+	port                          int32
+	client                        pb.NodeServiceClient
+	connectedNodes                []pb.NodeServiceClient
+	inCriticalSection             bool
+	tryingToAccessCriticalSection bool
+	timestamp                     int32
+	localQueue                    []pb.AccessRequest
 }
 type Server struct {
 	pb.UnimplementedNodeServiceServer
@@ -143,7 +144,7 @@ func (s *Server) RequestAccess(ctx context.Context, accessRequest *pb.AccessRequ
 	//fmt.Println("I HAVE RECIEVED AN ACCESS REQUEST")
 	//If the current node is not in the critical section, and if the requesting node has a lower time stamp, grant access, otherwise deny access.
 	granted := false
-	if !s.node.inCriticalSection && senderTimestamp < localTimestamp || (!s.node.inCriticalSection && senderTimestamp == localTimestamp && accessRequest.NodeID > s.node.port) {
+	if !s.node.tryingToAccessCriticalSection && !s.node.inCriticalSection || s.node.inCriticalSection && senderTimestamp < localTimestamp || (!s.node.inCriticalSection && senderTimestamp == localTimestamp && accessRequest.NodeID > s.node.port) {
 		granted = true
 		//fmt.Printf("I HAVE DECIDED TO GRANT ACCESS! MY TIMESTAMP IS: %v! AM I IN THE CRITICAL SECTION? %t\n}", s.node.timestamp, s.node.inCriticalSection)
 	} else {
@@ -152,7 +153,7 @@ func (s *Server) RequestAccess(ctx context.Context, accessRequest *pb.AccessRequ
 		s.node.localQueue = append(s.node.localQueue, pb.AccessRequest{NodeID: accessRequest.NodeID, Timestamp: accessRequest.Timestamp})
 		//fmt.Printf("I HAVE DECIDED TO DENY ACCESS! MY TIMESTAMP IS: %v! AM I IN THE CRITICAL SECTION? %t\n", s.node.timestamp, s.node.inCriticalSection)
 		//fmt.Printf("I HAVE ADDED THE REQUEST TO MY LOCAL QUEUE. THE NUMBER OF REQUESTS IN MY QUEUE IS: %v\n", len(s.node.localQueue))
-		s.node.ListRequestsInQueue()
+		//s.node.ListRequestsInQueue()
 	}
 	//We return a response with information on whether or not the request has been granted.
 	return &pb.AccessRequestResponse{Granted: granted, Timestamp: localTimestamp}, nil
@@ -178,12 +179,15 @@ func (s *Server) AttemptToAccessTheCriticalZone(port int32) {
 			time.Sleep(time.Millisecond * time.Duration(500))
 			continue
 		}
+		s.node.tryingToAccessCriticalSection = false
 
 		randSrc := rand.NewSource(time.Now().UnixNano())
 		randGen := rand.New(randSrc)
-		wait := int32(randGen.Intn(100000)) // Generate a random integer and cast to int32
+		wait := int32(randGen.Intn(5000)) // Generate a random integer and cast to int32
 		time.Sleep(time.Millisecond * time.Duration(wait))
 		fmt.Println(" * * * I HAVE DECIDED THAT I WANT TO ENTER THE CRITICAL SECTION * * * ")
+
+		s.node.tryingToAccessCriticalSection = true
 
 		var accessGrantedCount = 0
 		//fmt.Printf("I am starting over the loop! The access granted count is %v\n", accessGrantedCount)
@@ -252,6 +256,7 @@ func (s *Server) EnterCriticalSectionDirectly(ctx context.Context, accessRequest
 func (s *Server) EnterCriticalSection() {
 	log.Printf("\n\n* * * I HAVE JUST ENTERED THE CRITICAL ZONE ON PORT %v! MY TIMESTAMP IS %v * * * \n\n\n", s.node.port, s.node.timestamp)
 	s.node.inCriticalSection = true
+	s.node.tryingToAccessCriticalSection = false
 	time.Sleep(time.Millisecond * time.Duration(5000))
 	//We update the timestamp ... to ensure that future requests reflect the most recent state. I am not 100 % sure this is necessary...
 	s.node.timestamp++
