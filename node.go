@@ -12,6 +12,7 @@ import (
 
 	pb "homework4/proto"
 
+	"github.com/briandowns/spinner"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
@@ -79,7 +80,7 @@ func (s *Server) AnnounceConnection(ctx context.Context, announcement *pb.Connec
 
 func (s *Server) LeaveCriticalSection() {
 
-	log.Printf("\n\n * * * I AM LEAVING THE CRITICAL ZONE NOW. PORT %v out! * * * \n\n\n", s.node.port)
+	log.Printf("\n\n * * * LEAVING THE CRITICAL ZONE... (PORT %v) * * * \n\n\n", s.node.port)
 	s.node.inCriticalSection = false
 
 	// Next we need to inform all the connected nodes that we are releasing the critical section so that another node may be granted access.
@@ -166,18 +167,31 @@ func (s *Server) AnnounceLeave(ctx context.Context, announcement *pb.LeaveAnnoun
 }
 
 func (s *Server) AttemptToAccessTheCriticalZone(port int32) {
+	// Spinner for a more interactive application
+	spinner := spinner.New(spinner.CharSets[14], 100*time.Millisecond) // Build our new spinner
 	for {
 		//if already in the critical section, have a wait and try again.
 		if s.node.inCriticalSection {
-			fmt.Println("* In the zone *")
+			if !spinner.Active() {
+				fmt.Println("* In Critical Section... *")
+				// Spinner for a more interactive application
+				spinner.Start()
+			}
 			time.Sleep(time.Millisecond * time.Duration(500))
 			continue
 		}
 		// We check if the request is already in the local queue. If so, we don't want to send another request.
 		if s.isRequestInQueue(port) {
-			fmt.Println(" Waiting ...")
+			if !spinner.Active() {
+				fmt.Println("* Waiting... *")
+				// Spinner for a more interactive application
+				spinner.Start()
+			}
 			time.Sleep(time.Millisecond * time.Duration(500))
 			continue
+		}
+		if spinner.Active() {
+			spinner.Stop()
 		}
 		s.node.tryingToAccessCriticalSection = false
 
@@ -185,7 +199,7 @@ func (s *Server) AttemptToAccessTheCriticalZone(port int32) {
 		randGen := rand.New(randSrc)
 		wait := int32(randGen.Intn(5000)) // Generate a random integer and cast to int32
 		time.Sleep(time.Millisecond * time.Duration(wait))
-		fmt.Println(" * * * I HAVE DECIDED THAT I WANT TO ENTER THE CRITICAL SECTION * * * ")
+		fmt.Println(" * * * TRYING TO ENTER THE CRITICAL SECTION * * * ")
 
 		s.node.tryingToAccessCriticalSection = true
 
@@ -254,7 +268,7 @@ func (s *Server) EnterCriticalSectionDirectly(ctx context.Context, accessRequest
 }
 
 func (s *Server) EnterCriticalSection() {
-	log.Printf("\n\n* * * I HAVE JUST ENTERED THE CRITICAL ZONE ON PORT %v! MY TIMESTAMP IS %v * * * \n\n\n", s.node.port, s.node.timestamp)
+	log.Printf("\n\n* * * ENTERED THE CRITICAL ZONE ON PORT %v, AT TIMESTAMP: %v * * * \n\n\n", s.node.port, s.node.timestamp)
 	s.node.inCriticalSection = true
 	s.node.tryingToAccessCriticalSection = false
 	time.Sleep(time.Millisecond * time.Duration(5000))
@@ -340,7 +354,7 @@ func (s *Server) isRequestInQueue(nodeID int32) bool {
 }
 
 func (n *NodeInfo) ListRequestsInQueue() {
-	fmt.Println("THESE ARE THE ELEMENTS IN MY LOCAL QUEUE: ")
+	fmt.Println("ELEMENTS IN MY QUEUE: ")
 	for _, req := range n.localQueue {
 		fmt.Printf(" %v", req.NodeID)
 	}
