@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math/rand"
 	"net"
 	"sort"
 	"strconv"
@@ -48,10 +49,6 @@ func (s *Server) AnnounceQueuedRequest(ctx context.Context, queuedRequest *pb.Ac
 	}
 	if !isAlreadyQueued {
 		s.node.localQueue = append(s.node.localQueue, pb.AccessRequest{NodeID: queuedRequest.NodeID, Timestamp: queuedRequest.Timestamp})
-		fmt.Println("I JUST ADDED A REQUEST TO MY QUEUE WHICH I HAD NOT ADDED BEFORE. MY QUEUE NOW LOOKS LIKE THIS: ")
-		s.node.ListRequestsInQueue()
-	} else {
-		fmt.Println("THIS REQUESTS WAS ALREADY IN MY QUEUEUE")
 	}
 	return &pb.Confirmation{}, nil
 }
@@ -62,7 +59,7 @@ func (s *Server) AnnounceConnection(ctx context.Context, announcement *pb.Connec
 	transportCreds := insecure.NewCredentials()
 	//Establish a grpc connection to the other node using addres and transport credentials
 	address := ":" + strconv.Itoa(int(announcement.NodeID))
-	fmt.Println("I have recieved a connection announcement which means a new node has joined the system.")
+	fmt.Println("NEW NODE JOINED.")
 	conn, err := grpc.Dial(address, grpc.WithTransportCredentials(transportCreds))
 	if err != nil {
 		log.Fatalf("Failed to connect  ... : %v\n", err)
@@ -124,8 +121,8 @@ func (s *Server) LeaveCriticalSection() {
 		//a whole lot of figuring out if all the nodes agree when we get out the next request from the queue. Instead, we can just tell the node
 		//which sent the request we got out from the queue that it is free to go to the critical section directly (using an rpc call).
 
-		fmt.Printf("NOW TELLING NODE %v TO ENTER THE CRITICAL SECTION DIRECTLY", nextRequestSenderNodeID)
-		go nextRequestSenderNode.client.EnterCriticalSectionDirectly(context.Background(), &pb.AccessRequest{NodeID: nextRequestSenderNodeID, Timestamp: s.node.timestamp})
+		//fmt.Printf("NOW TELLING NODE %v TO ENTER THE CRITICAL SECTION DIRECTLY", nextRequestSenderNodeID)
+		go nextRequestSenderNode.client.EnterCriticalSectionDirectly(context.Background(), &pb.AccessRequest{NodeID: s.node.port, Timestamp: s.node.timestamp})
 
 		// We then remove this request from the local queue, as it has been processed
 		// We remove it only from the local queue, as the request has already been removed from all other node's queues when node
@@ -163,7 +160,6 @@ func (s *Server) RequestAccess(ctx context.Context, accessRequest *pb.AccessRequ
 func (s *Server) AnnounceLeave(ctx context.Context, announcement *pb.LeaveAnnouncement) (*pb.LeaveAnnouncementResponse, error) {
 	//This method is called to indicate that a node has left the critical section, which means we need to update the queue.
 	//We remove from the queue the request from the node which we have just learned has left the critical section, if it is there.
-	fmt.Printf("\n ######### %v ########## \n\n", announcement.NodeID)
 	s.node.removeRequest(announcement.NodeID)
 	return &pb.LeaveAnnouncementResponse{}, nil
 }
@@ -172,16 +168,22 @@ func (s *Server) AttemptToAccessTheCriticalZone(port int32) {
 	for {
 		//if already in the critical section, have a wait and try again.
 		if s.node.inCriticalSection {
-			time.Sleep(time.Millisecond * time.Duration(200))
 			fmt.Println("* In the zone *")
+			time.Sleep(time.Millisecond * time.Duration(500))
 			continue
 		}
 		// We check if the request is already in the local queue. If so, we don't want to send another request.
 		if s.isRequestInQueue(port) {
 			fmt.Println(" Waiting ...")
-			time.Sleep(time.Millisecond * time.Duration(200))
+			time.Sleep(time.Millisecond * time.Duration(500))
 			continue
 		}
+
+		randSrc := rand.NewSource(time.Now().UnixNano())
+		randGen := rand.New(randSrc)
+		wait := int32(randGen.Intn(100000)) // Generate a random integer and cast to int32
+		time.Sleep(time.Millisecond * time.Duration(wait))
+		fmt.Println(" * * * I HAVE DECIDED THAT I WANT TO ENTER THE CRITICAL SECTION * * * ")
 
 		var accessGrantedCount = 0
 		//fmt.Printf("I am starting over the loop! The access granted count is %v\n", accessGrantedCount)
@@ -219,13 +221,13 @@ func (s *Server) AttemptToAccessTheCriticalZone(port int32) {
 			//We have now cycled through every node, sent out a request and recieved a response.
 			//We check if the number of responses granting access matches the number of connected nodes (minus one, since we don't send the request to this node!)
 			if accessGrantedCount == len(s.node.connectedNodes)-1 {
-				fmt.Println("THE NUMBER OF NODES GRANTING ACCESS IS EQUAL TO THE NUMBER OF CONNECTED NODES MINUS ONE: NOW ENTERING THE SECTION")
+				//fmt.Println("THE NUMBER OF NODES GRANTING ACCESS IS EQUAL TO THE NUMBER OF CONNECTED NODES MINUS ONE: NOW ENTERING THE SECTION")
 				//If it matches we enter (and leave) the critical section
 				s.EnterCriticalSection()
 				//we reset the inCriticalSection and accesGrantedCount variables.
 				accessGrantedCount = 0
 			} else {
-				fmt.Printf("THE NUMBER OF NODES GRANTING ACCESS IS NOT EQUAL TO THE NUMBER OF CONNECTED NODES MINUS ONE. CONNECTED NODES: %d. NODES GRANTING ACCESS: %d\n", len(s.node.connectedNodes), accessGrantedCount)
+				//fmt.Printf("THE NUMBER OF NODES GRANTING ACCESS IS NOT EQUAL TO THE NUMBER OF CONNECTED NODES MINUS ONE. CONNECTED NODES: %d. NODES GRANTING ACCESS: %d\n", len(s.node.connectedNodes), accessGrantedCount)
 				//If all nodes did not grant access, we instead need to queue our request.
 				//We will then handle the request in due time, the same way we handle the other requests in the queue.
 				s.node.localQueue = append(s.node.localQueue, pb.AccessRequest{NodeID: port, Timestamp: s.node.timestamp})
@@ -242,13 +244,13 @@ func (s *Server) AttemptToAccessTheCriticalZone(port int32) {
 }
 
 func (s *Server) EnterCriticalSectionDirectly(ctx context.Context, accessRequest *pb.AccessRequest) (*pb.Confirmation, error) {
-	fmt.Printf("THE NODE WITH THE ID %v HAS JUST ASKED ME THE ENTER THE CRITICAL SECTION DIRECTLY!\n", accessRequest.NodeID)
+	//fmt.Printf("THE NODE WITH THE ID %v HAS JUST ASKED ME THE ENTER THE CRITICAL SECTION DIRECTLY!\n", accessRequest.NodeID)
 	s.EnterCriticalSection()
 	return &pb.Confirmation{}, nil
 }
 
 func (s *Server) EnterCriticalSection() {
-	log.Printf("\n\n* * * I HAVE JUST ENTERED THE CRITICAL ZONE ON PORT %v! * * * \n\n\n", s.node.port)
+	log.Printf("\n\n* * * I HAVE JUST ENTERED THE CRITICAL ZONE ON PORT %v! MY TIMESTAMP IS %v * * * \n\n\n", s.node.port, s.node.timestamp)
 	s.node.inCriticalSection = true
 	time.Sleep(time.Millisecond * time.Duration(5000))
 	//We update the timestamp ... to ensure that future requests reflect the most recent state. I am not 100 % sure this is necessary...
