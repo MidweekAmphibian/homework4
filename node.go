@@ -159,6 +159,10 @@ func (s *Server) RequestAccess(ctx context.Context, accessRequest *pb.AccessRequ
 		//fmt.Printf("I HAVE ADDED THE REQUEST TO MY LOCAL QUEUE. THE NUMBER OF REQUESTS IN MY QUEUE IS: %v\n", len(s.node.localQueue))
 		//s.node.ListRequestsInQueue()
 	}
+	//simple implimentation of Lamport timestamp
+	if localTimestamp < senderTimestamp {
+		s.node.timestamp = senderTimestamp
+	}
 	//We return a response with information on whether or not the request has been granted.
 	return &pb.AccessRequestResponse{Granted: granted, Timestamp: localTimestamp}, nil
 }
@@ -232,11 +236,6 @@ func (s *Server) AccessCriticalZone(port int32) {
 					if accessRequestResponse.Granted {
 						accessGrantedCount++
 					}
-					//simple implimentation of Lamport timestamp
-					if node.timestamp < s.node.timestamp {
-						node.timestamp = s.node.timestamp
-					}
-					node.timestamp++
 				}
 			}
 
