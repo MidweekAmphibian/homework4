@@ -9,6 +9,8 @@ service NodeService {
     rpc RequestAccess(AccessRequest) returns (AccessRequestResponse);
     rpc AnnounceLeave(LeaveAnnouncement) returns (LeaveAnnouncementResponse);
     rpc EnterCriticalSectionDirectly(AccessRequest) returns (Confirmation);
+    rpc IExist(Confirmation) returns (Confirmation);
+    rpc AnnounceQueuedRequest(AccessRequest) returns (Confirmation);
 }
 
 message AccessRequest {
