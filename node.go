@@ -232,8 +232,11 @@ func (s *Server) AccessCriticalZone(port int32) {
 					if accessRequestResponse.Granted {
 						accessGrantedCount++
 					}
-
-					s.node.timestamp++
+					//simple implimentation of Lamport timestamp
+					if node.timestamp < s.node.timestamp {
+						node.timestamp = s.node.timestamp
+					}
+					node.timestamp++
 				}
 			}
 
@@ -299,8 +302,6 @@ func (s *Server) EnterCriticalSection() {
 	defer file.Close()
 	//defer mu.Unlock()
 
-	//We update the timestamp ... to ensure that future requests reflect the most recent state. I am not 100 % sure this is necessary...
-	s.node.timestamp++
 	//We remove the request to enter the section from the queue if it is there.
 	s.node.removeRequest(s.node.port)
 	s.LeaveCriticalSection()
